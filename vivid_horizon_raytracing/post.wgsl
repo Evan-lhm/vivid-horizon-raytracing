@@ -300,7 +300,9 @@ fn underwater(colour: vec3<f32>, position: vec3<f32>, pixel: vec2<f32>) -> vec3<
     // Swamp and mangrove water: vanilla's water fog colour there is a dark olive (swamp #232317) where the sea's is
     // blue; its greenness over blue says how much dissolved organic matter and silt the water holds. Murky water
     // absorbs blue most (CDOM) and scatters strongly, so it is brown-green and visibility drops to a few blocks.
-    let murk = smoothstep(-0.1, 0.04, frame.fog_color.g - frame.fog_color.b);
+    // Linear between the sea's water fog (g - b about -0.18) and the swamp's (+0.05), which vanilla eases over time
+    // when the camera swims from one biome into the other: no threshold.
+    let murk = clamp((frame.fog_color.g - frame.fog_color.b + 0.15) / 0.2, 0.0, 1.0);
     let sigma = mix(SEA_SIGMA, vec3<f32>(0.32, 0.26, 0.42), murk);
     let scatter = mix(SEA_SCATTER, vec3<f32>(0.16, 0.17, 0.08), murk) * exp(-sigma * depth * 1.5);
     let t_all = exp(-sigma * d);

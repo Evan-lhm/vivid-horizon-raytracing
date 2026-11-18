@@ -155,63 +155,47 @@ fn night_sky(d: vec3<f32>) -> vec3<f32> {
 }
 
 // ---------------------------------------------------------------- clouds
-// A grid of columns, 16 x 16 blocks, as vanilla's grid but larger. A full column is a box from a flat base at
-// y = 192 up to a top that steps by 4 blocks (8 to 20 blocks thick), so the clouds are thick blocks with sharp edges.
-// Inside, they are a uniform medium: the light is the sun's, dimmed by the cloud it crosses to reach each point
-// (a few steps toward the sun through the same grid), scattered toward the eye (Henyey-Greenstein, a forward and a
-// back lobe), plus the sky's light from above and the ground's and the low sun's from below.
-// Style: real clouds are not boxes, and their tops are not flat steps; the light inside follows the same laws.
+// Style, "cottony but square" (Evan's reference): each cloud is a solid box with rounded edges, lit like a soft
+// solid (bright top, sides by their angle to the sun, a darker underside lit by the ground and the low sun), with a
+// soft rim about a block wide. Real clouds are neither solid nor boxes; this is a look, not a medium. One box at most
+// in each 24-block cell of a layer from y = 192 to 212, its size, place and height from hashes of the cell, the
+// cover from a slow noise (more and larger in rain). The ray walks the cells (2D DDA) and, in a cell with a box,
+// steps along the box's signed distance (a rounded box: exact distance, exact normal): no samples, so no streaks
+// and no grid.
 const BASE: f32 = 192.0;
 const TOP_MAX: f32 = 212.0;
-const CELL: f32 = 16.0;
+const CELL: f32 = 24.0;
 // Vanilla's clouds move 0.6 block a second.
 // shortcut: frame.time wraps every hour, so the clouds jump once an hour; use a day counter if the API gets one.
 const DRIFT: f32 = 0.6;
-// Extinction a block: 4 blocks of cloud keep 30 %, 12 blocks 3 %. Style: real cumulus is far denser (about 0.05 a
-// metre), which would show only a hard surface; this lets light into the edges, as small clouds look.
-const SIGMA: f32 = 0.3;
-const MAX_CELLS: i32 = 40;
-const MAX_SAMPLES: i32 = 24;
+const MAX_CELLS: i32 = 64;
 const FAR: f32 = 2600.0;
+// How wide the soft rim is, in blocks.
+const RIM: f32 = 0.9;
 
 fn drift() -> vec2<f32> { return vec2<f32>(frame.time * DRIFT, 0.0); }
 
-// The column's top (BASE when it holds no cloud), for the cell at grid coordinates `cell`.
-fn column_top(cell: vec2<f32>) -> f32 {
-    // Mostly the large-scale noise: the fine one alone made lone single cells (small floating hexagons from below).
-    let n = sk_vnoise(cell * 0.17) * 0.88 + sk_vnoise(cell * 0.45 + 17.0) * 0.12;
-    let thr = mix(0.55, 0.4, frame.rain);
-    if n <= thr { return BASE; }
-    let k = (n - thr) / (1.0 - thr);
-    return BASE + 8.0 + 4.0 * floor(min(k * 4.0, 3.0));
+// The box of a cell: centre (in the drifted grid's frame) in xyz and rounding radius in w; half-size in the second
+// vector, whose w is 0 when the cell is empty.
+fn cloud_box(cell: vec2<f32>) -> array<vec4<f32>, 2> {
+    let cover = sk_vnoise(cell * 0.21) * 0.7 + hash3(vec3<f32>(cell, 5.0)) * 0.3;
+    let thr = mix(0.52, 0.32, frame.rain);
+    if cover <= thr { return array<vec4<f32>, 2>(vec4<f32>(0.0), vec4<f32>(0.0)); }
+    let h = vec4<f32>(hash3(vec3<f32>(cell, 11.0)), hash3(vec3<f32>(cell, 12.0)), hash3(vec3<f32>(cell, 13.0)), hash3(vec3<f32>(cell, 14.0)));
+    let g = vec2<f32>(hash3(vec3<f32>(cell, 15.0)), hash3(vec3<f32>(cell, 16.0)));
+    let big = 1.0 + 0.6 * smoothstep(thr, 1.0, cover) + 0.4 * frame.rain;
+    let half_xz = min(vec2<f32>(2.5 + 5.0 * h.x, 2.5 + 5.0 * h.y) * big, vec2<f32>(CELL * 0.5 - 1.5));
+    let half_y = 1.5 + 1.8 * h.z;
+    let room = vec2<f32>(CELL * 0.5) - half_xz - 1.0;
+    let centre = vec3<f32>((cell.x + 0.5) * CELL + (g.x - 0.5) * 2.0 * room.x, BASE + 3.0 + 12.0 * h.w,
+        (cell.y + 0.5) * CELL + (g.y - 0.5) * 2.0 * room.y);
+    let r = min(1.8, 0.8 * min(half_y, min(half_xz.x, half_xz.y)));
+    return array<vec4<f32>, 2>(vec4<f32>(centre, r), vec4<f32>(half_xz.x, half_y, half_xz.y, 1.0));
 }
-fn top_at(p: vec3<f32>) -> f32 {
-    return column_top(floor((p.xz - drift()) / CELL));
+fn round_box(p: vec3<f32>, b: vec3<f32>, r: f32) -> f32 {
+    let q = abs(p) - (b - vec3<f32>(r));
+    return length(max(q, vec3<f32>(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0) - r;
 }
-fn inside(p: vec3<f32>) -> bool {
-    return p.y >= BASE && p.y <= top_at(p);
-}
-
-// How much of the sun reaches a point of the cloud: optical depth along four steps toward the sun.
-fn sun_depth(p: vec3<f32>, s: vec3<f32>) -> f32 {
-    var od = 0.0;
-    var prev = 0.0;
-    for (var i = 0; i < 4; i++) {
-        let l = 1.5 * pow(2.2, f32(i));
-        let q = p + s * l;
-        if q.y > TOP_MAX || q.y < BASE - 1.0 { break; }
-        if inside(q) { od += SIGMA * (l - prev); }
-        prev = l;
-    }
-    return od;
-}
-
-// Clouds are columns of 16 blocks (column_top) cut into voxels of 2 blocks. Style, "cottony but square": a voxel
-// near a face of the column that looks onto open sky may be missing, lower or raised (a hash per voxel, more the
-// nearer the edge), every voxel's top may sit a step lower, and the rim's voxels are thinner (less dense), so
-// the silhouette is ragged sub-blocks with soft, see-through edges and the tops are no longer flat slabs. Each
-// voxel is uniform inside, and the ray's length through it is exact: no samples to streak.
-const SUB: f32 = 2.0;
 
 // Clouds along the view ray from the camera, in front of the sky `behind`: what the eye sees.
 fn clouds(d: vec3<f32>, behind: vec3<f32>) -> vec3<f32> {
@@ -241,8 +225,9 @@ fn clouds(d: vec3<f32>, behind: vec3<f32>) -> vec3<f32> {
     // Under a rain deck the bases see no low sun: a grey, dimmer underside.
     let below_w = mix(below, vec3<f32>(sk_lum(below)), frame.rain) * mix(1.0, 0.4, frame.rain);
 
-    // Walk the grid's cells (2D DDA); inside a cell, the part of the ray within the column's box is sampled.
-    let start = (cam.xz + d.xz * t_in - drift()) / CELL;
+    // The camera in the drifted grid's frame.
+    let eye = vec3<f32>(cam.x - drift().x, cam.y, cam.z - drift().y);
+    let start = (eye.xz + d.xz * t_in) / CELL;
     var cell = floor(start);
     let dir = d.xz;
     let step = vec2<f32>(select(-1.0, 1.0, dir.x >= 0.0), select(-1.0, 1.0, dir.y >= 0.0));
@@ -250,84 +235,54 @@ fn clouds(d: vec3<f32>, behind: vec3<f32>) -> vec3<f32> {
     var next = vec2<f32>(
         select(start.x - cell.x, cell.x + 1.0 - start.x, dir.x >= 0.0) * inv.x,
         select(start.y - cell.y, cell.y + 1.0 - start.y, dir.y >= 0.0) * inv.y) + t_in;
-    var t = t_in;
-    var trans = 1.0;
-    var lit = vec3<f32>(0.0);
-    var samples = 0;
-    var src_e = array<vec3<f32>, 2>(vec3<f32>(0.0), vec3<f32>(0.0));
+    let id = 1.0 / select(d, vec3<f32>(1e-6), abs(d) < vec3<f32>(1e-6));
+    var acc = vec3<f32>(0.0);
+    var alpha = 0.0;
     var first = -1.0;
     for (var i = 0; i < MAX_CELLS; i++) {
         let t_exit = min(min(next.x, next.y), t_out);
-        let top = column_top(cell);
-        if top > BASE {
-            // Which faces look onto open sky (no cloud in the neighbouring column).
-            let open = vec4<bool>(column_top(cell - vec2<f32>(1.0, 0.0)) <= BASE, column_top(cell + vec2<f32>(1.0, 0.0)) <= BASE,
-                column_top(cell - vec2<f32>(0.0, 1.0)) <= BASE, column_top(cell + vec2<f32>(0.0, 1.0)) <= BASE);
-            // Walk the 2-block voxels of this column along the ray (a second 2D DDA, inside the cell).
-            let sstart = (cam.xz + d.xz * t - drift()) / SUB;
-            var sc = floor(sstart + dir * 1e-4);
-            let sinv = vec2<f32>(SUB / max(abs(dir.x), 1e-6), SUB / max(abs(dir.y), 1e-6));
-            var snext = vec2<f32>(
-                select(sstart.x - sc.x, sc.x + 1.0 - sstart.x, dir.x >= 0.0) * sinv.x,
-                select(sstart.y - sc.y, sc.y + 1.0 - sstart.y, dir.y >= 0.0) * sinv.y) + t;
-            var ts = t;
-            for (var j = 0; j < 20; j++) {
-                let ts_exit = min(min(snext.x, snext.y), t_exit);
-                let lc = clamp(sc - cell * 8.0, vec2<f32>(0.0), vec2<f32>(7.0));
-                var edge = 9.0;
-                if open.x { edge = min(edge, lc.x); }
-                if open.y { edge = min(edge, 7.0 - lc.x); }
-                if open.z { edge = min(edge, lc.y); }
-                if open.w { edge = min(edge, 7.0 - lc.y); }
-                let rim = clamp(1.0 - edge / 3.0, 0.0, 1.0);
-                let h = vec4<f32>(hash3(vec3<f32>(sc, 1.0)), hash3(vec3<f32>(sc, 2.0)), hash3(vec3<f32>(sc, 3.0)), hash3(vec3<f32>(sc, 4.0)));
-                if h.x >= rim * 0.55 {
-                    let vtop = top - SUB * floor(rim * (h.y * 0.6 + h.z * 2.4));
-                    // Flat bases: a cumulus' base is the level where rising air condenses, the same across the
-                    // cloud. Raised rim bases showed from below as a grid of voxels of every thickness.
-                    let vbot = BASE;
-                    if vtop > vbot {
-                        let ya = (vbot - cam.y) / d.y;
-                        let yb = (vtop - cam.y) / d.y;
-                        let a = max(ts, min(ya, yb));
-                        let b = min(ts_exit, max(ya, yb));
-                        if b > a {
-                            // The light inside the cloud, taken at two points that move smoothly with the pixel: where
-                            // the ray enters the cloud and 8 blocks further on, and blended by depth along the ray.
-                            // Lit once per voxel instead, each voxel got its own flat shade: a grid seen from below.
-                            if first < 0.0 {
-                                first = a;
-                                for (var e = 0; e < 2; e++) {
-                                    let pe = cam + d * (first + f32(e) * 8.0);
-                                    let od = sun_depth(pe, s);
-                                    // Multiple scattering, after Wrenninge's octaves: a second, weaker and less
-                                    // attenuated term keeps the inside of a thick cloud from going black.
-                                    let he = clamp((pe.y - BASE) / (TOP_MAX - BASE), 0.0, 1.0);
-                                    src_e[e] = light * (exp(-od) + 0.3 * exp(-od * 0.25)) * phase + mix(below_w, sky_up, he * he * 0.6 + he * 0.4);
-                                }
-                            }
-                            let dens = mix(1.0, 0.45, rim);
-                            let src = mix(src_e[0], src_e[1], clamp((0.5 * (a + b) - first) / 8.0, 0.0, 1.0));
-                            let step_t = exp(-SIGMA * dens * (b - a));
-                            lit += trans * src * (1.0 - step_t);
-                            trans *= step_t;
-                        }
-                    }
+        let bx = cloud_box(cell);
+        if bx[1].w > 0.0 {
+            let c = bx[0].xyz - eye;
+            let hb = bx[1].xyz;
+            let r = bx[0].w;
+            // The ray's span inside the box grown by the rim (slab test).
+            let t0 = (c - hb - vec3<f32>(RIM)) * id;
+            let t1 = (c + hb + vec3<f32>(RIM)) * id;
+            let tn = max(max(min(t0.x, t1.x), min(t0.y, t1.y)), max(min(t0.z, t1.z), 0.0));
+            let tf = min(min(max(t0.x, t1.x), max(t0.y, t1.y)), max(t0.z, t1.z));
+            if tf > tn {
+                var tt = tn;
+                var closest = 1e9;
+                var t_close = tn;
+                var hit = false;
+                for (var k = 0; k < 24; k++) {
+                    let dist = round_box(d * tt - c, hb, r);
+                    if dist < closest { closest = dist; t_close = tt; }
+                    if dist < 0.02 { hit = true; break; }
+                    tt += max(dist, 0.05);
+                    if tt > tf { break; }
                 }
-                if ts_exit >= t_exit || trans < 0.02 { break; }
-                if snext.x < snext.y {
-                    ts = snext.x; snext.x += sinv.x; sc.x += step.x;
-                } else {
-                    ts = snext.y; snext.y += sinv.y; sc.y += step.y;
+                // The surface's normal (for the rim of a near miss, the closest point's), then its light.
+                let pl = d * t_close - c;
+                let q = abs(pl) - (hb - vec3<f32>(r));
+                let n = normalize(sign(pl) * max(q, vec3<f32>(0.0)) + vec3<f32>(0.0, 1e-4, 0.0));
+                let sun_side = max(dot(n, s), 0.0);
+                let col = light * (0.3 + 0.7 * sun_side) * (1.1 + 0.4 * phase) + mix(below_w, sky_up, 0.5 + 0.5 * n.y);
+                let a = select(1.0 - smoothstep(0.0, RIM, closest), 1.0, hit);
+                if a > 0.001 {
+                    if first < 0.0 { first = t_close; }
+                    acc += (1.0 - alpha) * a * col;
+                    alpha += (1.0 - alpha) * a;
                 }
+                if alpha > 0.98 { break; }
             }
-            if trans < 0.02 { break; }
         }
         if t_exit >= t_out { break; }
         if next.x < next.y {
-            t = next.x; next.x += inv.x; cell.x += step.x;
+            next.x += inv.x; cell.x += step.x;
         } else {
-            t = next.y; next.y += inv.y; cell.y += step.y;
+            next.y += inv.y; cell.y += step.y;
         }
     }
     if first < 0.0 { return behind; }
@@ -336,10 +291,10 @@ fn clouds(d: vec3<f32>, behind: vec3<f32>) -> vec3<f32> {
     let haze = 1.0 - exp(-first / 1800.0);
     let fade = 1.0 - smoothstep(FAR * 0.5, FAR, first);
     let horizon = sky_colour(normalize(vec3<f32>(d.x, 0.03, d.z)), frame.fog_color);
-    // Style: a rain deck's clouds as dark as the grey between them (a thick deck lets little light through), not
-    // brighter, so a storm sky reads as one low ceiling.
-    let seen = mix(lit * mix(1.0, 0.45, frame.rain), horizon * (1.0 - trans), haze);
-    return mix(behind, behind * trans + seen, fade);
+    // Style: a rain deck's clouds darker (a thick deck lets little light through), so a storm sky reads as one
+    // low ceiling.
+    let seen = mix(acc * mix(1.0, 0.45, frame.rain), horizon * alpha, haze);
+    return mix(behind, behind * (1.0 - alpha) + seen, fade);
 }
 
 

@@ -178,11 +178,12 @@ fn translucent(input: MaterialInput) -> Surface {
     let bent = refract(view, normal, 1.0 / 1.33);
     let under = trace(input.position - input.normal * 0.01, bent, 64.0);
     let tint = input.tint.rgb;
-    // A wide ramp on the biome's tint (the engine blends it between biomes per vertex), so the sea turns into
-    // swamp water gradually: ocean tints sit at g - b = -0.25 to -0.5, swamp and mangrove at +0.07 to +0.09.
-    let murk = smoothstep(-0.22, 0.08, tint.g - tint.b);
-    var sigma_a = mix(vec3<f32>(0.30, 0.05, 0.035), vec3<f32>(0.40, 0.28, 0.55), murk);
-    let sigma_s = mix(0.015, 0.35, murk);
+    // How murky, linear over the whole span of the biome's tint (blended between biomes by the engine), so the
+    // sea turns into swamp water as gradually as the tint does: the ocean's tints sit at g - b = -0.43 (river and
+    // ocean; colder ones lower), swamp and mangrove at +0.07 to +0.09. A narrower ramp made a hard edge.
+    let murk = clamp((tint.g - tint.b + 0.43) / 0.52, 0.0, 1.0);
+    var sigma_a = mix(vec3<f32>(0.30, 0.05, 0.035), vec3<f32>(0.36, 0.22, 0.42), murk);
+    let sigma_s = mix(0.015, 0.22, murk);
     let d = select(48.0, under.distance, under.distance >= 0.0);
     let depth_v = d * max(-bent.y, 0.05);
     var floor_colour = vec3<f32>(0.0);
@@ -198,7 +199,15 @@ fn translucent(input: MaterialInput) -> Surface {
     // bunches. The divergence of the wave slope at the floor's point, times the depth, scales the light there.
     var caustic = 1.0;
     let sun_amount = select(0.0, 1.0, frame.sun_direction.y > 0.0) * (1.0 - frame.rain) * input.light.y * (1.0 - murk);
+    // Caustics need the sun on the water above the floor: a ray from the floor toward the sun that meets a block
+    // (a tree, a roof, a cliff) means shade, and no caustic. The sun's height scales them (light per area).
+    var sun_reach = 0.0;
     if under.distance >= 0.0 && sun_amount > 0.01 {
+        let floor_at = input.position + bent * d;
+        let blocked = trace(floor_at + vec3<f32>(0.0, 0.05, 0.0), frame.sun_direction, 96.0);
+        sun_reach = select(1.0, 0.0, blocked.distance >= 0.0) * smoothstep(0.05, 0.4, frame.sun_direction.y);
+    }
+    if sun_reach > 0.0 {
         let fp = frame.camera_position.xz + input.position.xz + bent.xz * d;
         let e = 0.2;
         let sx = wave_slope(fp + vec2<f32>(e, 0.0), frame.time) - wave_slope(fp - vec2<f32>(e, 0.0), frame.time);
@@ -207,7 +216,7 @@ fn translucent(input: MaterialInput) -> Surface {
         // Faded in over the first half block of depth (the waves can't focus light over a film of water) and on
         // grazing views, where the bent ray's floor point jumps with each wave and the pattern breaks into noise.
         let settle = smoothstep(0.1, 0.6, depth_v) * smoothstep(0.15, 0.4, -bent.y);
-        caustic = mix(1.0, clamp(1.0 - div * min(depth_v, 6.0) * 1.5, 0.5, 1.8), sun_amount * settle);
+        caustic = mix(1.0, clamp(1.0 - div * min(depth_v, 6.0) * 1.5, 0.5, 1.8), sun_amount * settle * sun_reach);
     }
     let reach_floor = exp(-sigma_t * (d + depth_v));
     let scatter_colour = mix(tint * vec3<f32>(0.3, 0.42, 0.5), vec3<f32>(0.22, 0.24, 0.13), murk) * (0.7 + 0.5 * sun_amount);

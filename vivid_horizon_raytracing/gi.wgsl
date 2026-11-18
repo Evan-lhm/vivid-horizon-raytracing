@@ -286,10 +286,23 @@ fn post(input: PostInput) -> vec4<f32> {
                 let h0 = vec2<i32>(floor(hp));
                 let hf = hp - floor(hp);
                 let hm = vec2<i32>(hs) - vec2<i32>(1);
-                let hist = mix(
-                    mix(textureLoad(gi_b, clamp(h0, vec2<i32>(0), hm), 0).rgb, textureLoad(gi_b, clamp(h0 + vec2<i32>(1, 0), vec2<i32>(0), hm), 0).rgb, hf.x),
-                    mix(textureLoad(gi_b, clamp(h0 + vec2<i32>(0, 1), vec2<i32>(0), hm), 0).rgb, textureLoad(gi_b, clamp(h0 + vec2<i32>(1, 1), vec2<i32>(0), hm), 0).rgb, hf.x),
-                    hf.y);
+                // Each of the four texels counts only if it held the same surface last frame (same face, same
+                // distance, checked on the full-size pixel it covers); the weights of the others are dropped.
+                // At an edge the plain blend mixed the light of the two surfaces across it, and the pixels
+                // there flickered as the mix changed.
+                var hist = vec3<f32>(0.0);
+                var wsum = 0.0;
+                let fsize = vec2<i32>(frame.resolution) - vec2<i32>(1);
+                for (var k = 0; k < 4; k++) {
+                    let o = vec2<i32>(k & 1, k >> 1);
+                    let tp = clamp(h0 + o, vec2<i32>(0), hm);
+                    let tv = textureLoad(vis_b, min(tp * 2, fsize), 0);
+                    let same = floor(tv.b / 256.0) == face_id(n) && abs(tv.g - dist) < 0.05 * dist + 0.1;
+                    let wk = select(1.0 - hf.x, hf.x, o.x == 1) * select(1.0 - hf.y, hf.y, o.y == 1) * select(0.0, 1.0, same);
+                    hist += textureLoad(gi_b, tp, 0).rgb * wk;
+                    wsum += wk;
+                }
+                hist = select(textureLoad(gi_b, clamp(vec2<i32>(hp + 0.5), vec2<i32>(0), hm), 0).rgb, hist / max(wsum, 1e-4), wsum > 0.01);
                 let w = vec3<f32>(0.2126, 0.7152, 0.0722);
                 let cap = FIREFLY * dot(hist, w) + FIREFLY_FLOOR;
                 let held = now * min(1.0, cap / max(dot(now, w), 0.0001));
