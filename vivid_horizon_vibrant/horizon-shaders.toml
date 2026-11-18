@@ -1,0 +1,178 @@
+schema = 1
+id = "vivid_horizon_vibrant"
+name = "Vivid Horizon Vibrant"
+version = "1.0.0"
+api = "0.2"
+description = "Vivid Horizon RT with a style: vibrant colours, a painted sky and shaded cubic clouds. Each departure from physics is named in the code."
+authors = ["Evan-lhm"]
+license = "MIT"
+shared = ["atmos.wgsl", "sky_lib.wgsl"]
+
+[frame]
+fog = "pack"
+
+[ray_tracing]
+
+# The pack draws the sky and its own cubic clouds (sky.wgsl); the sun, moon and stars stay the game's.
+[sky]
+file = "sky.wgsl"
+clouds = false
+sun = false
+moon = false
+stars = false
+
+# 64x64 void-and-cluster blue noise, three independent channels (made with make_blue.py, no download).
+[[textures]]
+id = "blue"
+file = "blue.png"
+filter = "nearest"
+wrap = "repeat"
+
+# Bit 0 of input.tags: surfaces that let sunlight through (leaves, grass, plants).
+[[tags]]
+id = "foliage"
+sprites = ["block/*_leaves", "block/grass_block_top", "block/short_grass", "block/tall_grass_*", "block/fern", "block/large_fern_*", "block/vine", "block/azalea_leaves"]
+
+# Bit 1: plants drawn as crossed quads, lit with an up normal (PTGI gbuffers_terrain: plants write (0, 1, 0)),
+# so a tuft of grass is lit like the ground it grows from, not by its quad's arbitrary facing.
+[[tags]]
+id = "plant"
+sprites = ["block/short_grass", "block/tall_grass_*", "block/fern", "block/large_fern_*", "block/dead_bush"]
+
+# Bit 2: snow, which sparkles in the sun (post.wgsl).
+[[tags]]
+id = "snow"
+sprites = ["block/snow", "block/powder_snow"]
+
+# Bit 3: clear ice, which shows what lies behind it, bent and tinted (material.wgsl).
+[[tags]]
+id = "ice"
+sprites = ["block/ice", "block/frosted_ice_*"]
+
+# Bit 4: packed and blue ice, glossy (post.wgsl).
+[[tags]]
+id = "packed_ice"
+sprites = ["block/packed_ice", "block/blue_ice"]
+
+# Block light colours, after NVIDIA's rtx-remix-minecraft (BlockLightDefaults, BlockTextureManager
+# KNOWN_LIGHT_COLORS, Apache-2.0). Theirs are linear; these are the same colours in vanilla's
+# gamma (x^(1/2.2)), which is how `[[lights]]` is written. The first entry that matches wins.
+[[lights]]
+color = [0.26, 0.48, 1.0]
+blocks = ["soul_torch", "soul_wall_torch", "soul_campfire", "soul_fire"]
+[[lights]]
+color = [0.70, 0.87, 1.0]
+blocks = ["soul_lantern"]
+[[lights]]
+color = [1.0, 0.42, 0.17]
+blocks = ["redstone_torch", "redstone_wall_torch"]
+[[lights]]
+color = [1.0, 0.62, 0.35]
+blocks = ["torch", "wall_torch"]
+[[lights]]
+color = [1.0, 0.35, 0.26]
+blocks = ["campfire"]
+[[lights]]
+color = [1.0, 0.77, 0.58]
+blocks = ["lantern", "furnace", "smoker", "blast_furnace", "brewing_stand", "cave_vines", "cave_vines_plant", "*candle*"]
+[[lights]]
+color = [0.70, 0.95, 1.0]
+blocks = ["conduit"]
+[[lights]]
+color = [0.82, 0.62, 1.0]
+blocks = ["amethyst_cluster", "large_amethyst_bud", "medium_amethyst_bud", "small_amethyst_bud"]
+[[lights]]
+color = [0.85, 0.73, 0.95]
+blocks = ["respawn_anchor", "dragon_egg"]
+[[lights]]
+color = [0.73, 0.90, 0.66]
+blocks = ["glow_lichen"]
+[[lights]]
+color = [0.48, 0.73, 0.90]
+blocks = ["sculk_sensor", "calibrated_sculk_sensor", "sculk_catalyst"]
+[[lights]]
+color = [0.93, 1.0, 0.95]
+blocks = ["*copper_bulb"]
+[[lights]]
+color = [1.0, 1.0, 1.0]
+blocks = ["end_rod", "beacon"]
+
+# Rain and snow streaks (weather.wgsl).
+[weather]
+file = "weather.wgsl"
+
+[shadow]
+resolution = 2048
+distance = 128.0
+
+[material]
+file = "material.wgsl"
+name = "Unlit surface"
+
+[[post]]
+file = "shadow.wgsl"
+name = "Soft shadow"
+output = "vis_a"
+
+[[post]]
+file = "gi.wgsl"
+name = "Indirect light"
+output = "gi_a"
+scale = 0.5
+
+[[post]]
+file = "keep.wgsl"
+name = "Keep shadow"
+output = "vis_b"
+
+[[post]]
+file = "atrous_1.wgsl"
+files = ["atrous_lib.wgsl"]
+name = "Smooth light 1"
+
+[[post]]
+file = "keep_gi.wgsl"
+name = "Keep indirect light"
+output = "gi_b"
+scale = 0.5
+
+[[post]]
+file = "atrous_2.wgsl"
+files = ["atrous_lib.wgsl"]
+name = "Smooth light 2"
+
+[[post]]
+file = "atrous_3.wgsl"
+files = ["atrous_lib.wgsl"]
+name = "Smooth light 4"
+
+[[post]]
+file = "post.wgsl"
+name = "Ray-traced light"
+
+# Glare (lens and eye scatter): the lit picture at half size, then a quarter; the last pass adds them back.
+[[post]]
+file = "bloom_a.wgsl"
+files = ["bloom_lib.wgsl"]
+name = "Glare 1"
+output = "bloom_a"
+scale = 0.5
+
+[[post]]
+file = "bloom_b.wgsl"
+files = ["bloom_lib.wgsl"]
+name = "Glare 2"
+output = "bloom_b"
+scale = 0.25
+
+[[post]]
+file = "edge_aa.wgsl"
+files = ["bloom_lib.wgsl"]
+name = "Edge anti-aliasing and glare"
+
+[tonemap]
+file = "tonemap.wgsl"
+
+[entity]
+file = "entity.wgsl"
+name = "Lit entities"
