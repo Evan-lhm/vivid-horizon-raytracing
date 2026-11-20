@@ -4,6 +4,13 @@ A ray-traced shader pack for [Horizon](https://github.com/horizon-rust/horizon) 
 
 The non-ray-traced vibrant pack is [Vivid Horizon](https://github.com/Evan-lhm/vivid-horizon).
 
+## Screenshots
+
+![Vivid Horizon Raytracing, screenshot 1](screenshots/1.jpg)
+![Vivid Horizon Raytracing, screenshot 2](screenshots/2.jpg)
+![Vivid Horizon Raytracing, screenshot 3](screenshots/3.jpg)
+![Vivid Horizon Raytracing, screenshot 4](screenshots/4.jpg)
+
 ## Install
 
 Get it from the Horizon launcher (Mods, then Horizon), or put the `vivid_horizon_raytracing` folder in the game's `shaderpacks` folder and pick **Vivid Horizon Raytracing** in the shader menu. It needs ray tracing turned on (opt-in), a float HDR frame, and a GPU with hardware ray queries.
