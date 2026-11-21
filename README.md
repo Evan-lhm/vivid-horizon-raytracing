@@ -1,6 +1,6 @@
 # Vivid Horizon Raytracing
 
-A ray-traced shader pack for [Horizon](https://github.com/horizon-rust/horizon) (shader API 0.2, WGSL), in a vibrant style: ray-traced indirect light, soft sun shadows, light shafts, physical water, a painted sky with a Milky Way, soft-edged cubic clouds, glare and bloom. Each departure from physics is named in the source comments. **Beta (0.9.0).**
+A ray-traced shader pack for [Horizon](https://github.com/horizon-rust/horizon) (shader API 0.2, WGSL), in a vibrant style: ray-traced indirect light, soft sun shadows, light shafts, physical water, a painted sky with a Milky Way, soft-edged cubic clouds, glare and bloom. Each departure from physics is named in the source comments. **Beta (0.9.1).**
 
 The non-ray-traced vibrant pack is [Vivid Horizon](https://github.com/Evan-lhm/vivid-horizon).
 
@@ -19,7 +19,7 @@ Get it from the Horizon launcher (Mods, then Horizon), or put the `vivid_horizon
 
 ```sh
 horizon-shader check vivid_horizon_raytracing
-horizon-shader pack vivid_horizon_raytracing --out vivid_horizon_raytracing-0.9.0.hshader
+horizon-shader pack vivid_horizon_raytracing --out vivid_horizon_raytracing-0.9.1.hshader
 ```
 
 ## Known issues

@@ -16,8 +16,9 @@ fn distance_at(uv: vec2<f32>) -> f32 {
 }
 
 fn post(input: PostInput) -> vec4<f32> {
-    let p = vec2<i32>(input.pixel);
     let size = vec2<i32>(textureDimensions(previous));
+    // input.pixel is the window's, `previous` is the world's: they differ below 100 % resolution.
+    let p = vec2<i32>(input.uv * vec2<f32>(size));
     let d0 = distance_at(input.uv);
     var sum = input.color;
     var weight = 1.0;

@@ -1,7 +1,7 @@
 schema = 1
 id = "vivid_horizon_raytracing"
 name = "Vivid Horizon Raytracing"
-version = "0.9.0"
+version = "0.9.1"
 api = "0.2"
 description = "Ray-traced soft light, sun shadows, light shafts, physical water, a painted sky and shaded cubic clouds, in a vibrant style. Beta: needs ray tracing turned on. Each departure from physics is named in the code."
 authors = ["Evan-lhm"]

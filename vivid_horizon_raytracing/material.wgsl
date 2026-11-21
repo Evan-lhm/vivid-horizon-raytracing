@@ -75,9 +75,54 @@ fn wave_slope(p: vec2<f32>, t: f32) -> vec2<f32> {
     return slope;
 }
 
+// Water without rays (a GPU without ray queries, or the game not restarted since the pack was picked): the same
+// surface, the same sky and sun in the mirror, the floor read from the world's picture behind the water instead of
+// traced. shortcut: no terrain in the mirror (only the sky), no caustics, the floor is not refracted.
+fn water_no_rays(input: MaterialInput, lit: vec4<f32>) -> Surface {
+    let view = normalize(input.position);
+    var normal = input.normal;
+    if normal.y > 0.9 {
+        let at = frame.camera_position.xz + input.position.xz;
+        let w = wave_slope_at(at, frame.time, length(input.position)) + rain_ripple(at) * smoothstep(0.6, 0.95, input.light.y);
+        normal = normalize(vec3<f32>(-w.x, 1.0, -w.y));
+    }
+    if dot(view, normal) > 0.0 { return Surface(lit); }
+    let away = reflect(view, normal);
+    var seen = clouds(away, sky_colour(away, frame.sky_color.rgb) + night_sky(away));
+    let cs = dot(away, frame.sun_direction);
+    let sun_on = select(0.0, 1.0, frame.sun_direction.y > 0.0) * (1.0 - frame.rain) * sk_sun_colour(max(frame.sun_direction.y, 0.005));
+    seen += sun_on * (smoothstep(cos(0.034), cos(0.022), cs) * 6.0 + pow(max(cs, 0.0), 300.0) * 1.2);
+    // The floor: how far behind the water the world's depth lies, and its colour.
+    let px = min(vec2<i32>(clamp(input.screen, vec2<f32>(0.0), vec2<f32>(1.0)) * frame.resolution), vec2<i32>(frame.resolution) - vec2<i32>(1));
+    let dp = textureLoad(opaque_depth, px, 0);
+    var d = 48.0;
+    var floor_colour = vec3<f32>(0.0);
+    if dp > 0.0 {
+        let v = frame.projection_inverse * vec4<f32>(input.screen.x * 2.0 - 1.0, 1.0 - input.screen.y * 2.0, dp, 1.0);
+        d = clamp(length(v.xyz / v.w) - length(input.position), 0.0, 48.0);
+        floor_colour = textureLoad(opaque_color, px, 0).rgb;
+    }
+    let tint = input.tint.rgb;
+    let murk = clamp((tint.g - tint.b + 0.43) / 0.52, 0.0, 1.0);
+    let sigma_a = mix(vec3<f32>(0.30, 0.05, 0.035), vec3<f32>(0.36, 0.22, 0.42), murk);
+    let sigma_s = mix(0.015, 0.22, murk);
+    let sigma_t = sigma_a + vec3<f32>(sigma_s);
+    let sun_amount = select(0.0, 1.0, frame.sun_direction.y > 0.0) * (1.0 - frame.rain) * input.light.y * (1.0 - murk);
+    let scatter_colour = mix(tint * vec3<f32>(0.3, 0.42, 0.5), vec3<f32>(0.22, 0.24, 0.13), murk) * (0.7 + 0.5 * sun_amount);
+    let through = floor_colour * exp(-sigma_t * d * 2.0) * input.lightmap
+        + scatter_colour * input.lightmap * vec3<f32>(sigma_s) / sigma_t * (vec3<f32>(1.0) - exp(-sigma_t * d));
+    let cos_theta = clamp(dot(-view, normal), 0.0, 1.0);
+    let fresnel = 0.02 + 0.98 * pow(1.0 - cos_theta, 5.0);
+    return Surface(vec4<f32>(mix(through, seen * input.lightmap, clamp(fresnel, 0.0, 0.85)), 1.0));
+}
+
 fn translucent(input: MaterialInput) -> Surface {
     let lit = input.albedo * vec4<f32>(input.shaded_tint.rgb * input.lightmap, input.shaded_tint.a);
-    if frame.has_ray_tracing == 0u || frame.dimension != 0 { return Surface(lit); }
+    if frame.dimension != 0 { return Surface(lit); }
+    if frame.has_ray_tracing == 0u {
+        if input.fluid == 1u && frame.eye_in == 0u { return water_no_rays(input, lit); }
+        return Surface(lit);
+    }
     if input.fluid != 1u {
         // Glass, stained glass and ice mirror what a ray off them hits, by Schlick's Fresnel (F0 0.04),
         // over the colour vanilla gives them: a window shows the sky and the room across it.
